@@ -8,22 +8,29 @@ try:
 except NameError:
     pass
 
+import jax
+import jax.numpy as jnp
+from flax import serialization
 from rl_env_wrapper import extract_tensors, get_autoregressive_mask, MAX_PLANETS
+from models import EntityTransformer
 
-# Dummy Entity Transformer model to demonstrate the architecture
-class DummyEntityTransformer:
-    def __init__(self):
-        # We output a token per combination
-        self.output_dim = MAX_PLANETS * MAX_PLANETS * 4 + 1
-        self.w = np.random.randn(MAX_PLANETS * 14 + MAX_PLANETS * 9 + 4, self.output_dim)
-        
-    def predict(self, planet_matrix, fleet_matrix, global_vec, mask):
-        x = np.concatenate([planet_matrix.flatten(), fleet_matrix.flatten()[:MAX_PLANETS*9], global_vec])
-        logits = np.dot(x, self.w)
-        logits[~mask] = -np.inf
-        return np.argmax(logits)
+# Initialize the real EntityTransformer
+model = EntityTransformer()
 
-model = DummyEntityTransformer()
+# Generate dummy variables to establish the parameter tree structure
+dummy_p = jnp.zeros((1, 60, 14))
+dummy_f = jnp.zeros((1, 1000, 9))
+dummy_g = jnp.zeros((1, 4))
+variables = model.init(jax.random.PRNGKey(0), dummy_p, dummy_f, dummy_g)
+
+# Load the trained weights from the binary msgpack file
+weights_path = os.path.join(os.path.dirname(__file__), "model_weights.msgpack")
+if os.path.exists(weights_path):
+    with open(weights_path, "rb") as f:
+        trained_params = serialization.from_bytes(variables['params'], f.read())
+else:
+    print(f"WARNING: Checkpoint {weights_path} not found! Using random initialization.")
+    trained_params = variables['params']
 
 def agent(obs):
     player_id = obs.get("player", 0)
@@ -44,8 +51,16 @@ def agent(obs):
         planet_matrix, fleet_matrix, global_vec, all_planets = extract_tensors(obs, local_state_tracking)
         action_mask = get_autoregressive_mask(player_id, all_planets, local_state_tracking)
         
-        # Inference
-        action_token = model.predict(planet_matrix, fleet_matrix, global_vec, action_mask)
+        # CPU JAX Inference
+        logits, _ = model.apply(
+            {'params': trained_params}, 
+            jnp.expand_dims(planet_matrix, 0), 
+            jnp.expand_dims(fleet_matrix, 0), 
+            jnp.expand_dims(global_vec, 0)
+        )
+        logits = np.array(logits[0])
+        logits[~action_mask] = -np.inf
+        action_token = int(np.argmax(logits))
         
         if action_token == PASS_TOKEN_INDEX:
             break

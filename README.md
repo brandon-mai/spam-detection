@@ -26,10 +26,13 @@ This repository contains an advanced Asynchronous PPO implementation built with 
 ### 1. Training on a GPU/CPU Machine
 To train the agent, you must run the orchestrator which spawns CPU environments and performs JAX neural network updates.
 
-**GPU Setup:** If moving to a machine with a GPU (e.g., RTX 5090 or T4), install JAX with CUDA support first:
+**GPU Setup:** If moving to a machine with a GPU (e.g., RTX 5090 or T4), install JAX with CUDA support using the official release index to prevent version mismatch warnings:
 ```bash
-uv pip install -U "jax[cuda12]"
+uv pip install -U "jax[cuda12]" -f https://storage.googleapis.com/jax-releases/jax_cuda_releases.html
 ```
+
+**Hyperparameters:**
+All PPO training hyperparameters (learning rate, workers, epochs, gamma, etc.) are centralized in a `CONFIG` dictionary at the top of `train.py`.
 
 **Start Training:**
 ```bash
