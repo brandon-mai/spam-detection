@@ -23,21 +23,10 @@ def worker_process(worker_id, weights_queue, trajectory_queue, num_episodes=10):
     # Initialize empty variables for weights
     current_weights = None
     
-    # Silence stderr cleanly using file descriptor redirection
-    stderr_fd = sys.stderr.fileno()
-    dup_stderr = os.dup(stderr_fd)
-    devnull = os.open(os.devnull, os.O_WRONLY)
-    os.dup2(devnull, stderr_fd)
+    # We will just play against 'random' for phase 1 bootstrap
+    from kaggle_environments import make
+    env = make('orbit_wars', debug=False)
     
-    try:
-        from kaggle_environments import make
-        # We will just play against 'random' for phase 1 bootstrap
-        env = make('orbit_wars', debug=False)
-    finally:
-        os.dup2(dup_stderr, stderr_fd)
-        os.close(devnull)
-        os.close(dup_stderr)
-        
     for ep in range(num_episodes):
         # Check if new weights are available
         while not weights_queue.empty():

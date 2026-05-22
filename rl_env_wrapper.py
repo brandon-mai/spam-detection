@@ -1,6 +1,23 @@
 import numpy as np
 import math
-from kaggle_environments.envs.orbit_wars.orbit_wars import Planet, Fleet
+import sys
+import os
+import logging
+
+# Silence stderr cleanly using file descriptor redirection
+stderr_fd = sys.stderr.fileno()
+dup_stderr = os.dup(stderr_fd)
+devnull = os.open(os.devnull, os.O_WRONLY)
+os.dup2(devnull, stderr_fd)
+logging.disable(logging.CRITICAL)
+
+try:
+    from kaggle_environments.envs.orbit_wars.orbit_wars import Planet, Fleet
+finally:
+    logging.disable(logging.NOTSET)
+    os.dup2(dup_stderr, stderr_fd)
+    os.close(devnull)
+    os.close(dup_stderr)
 from orbit_wars_env_numba import point_to_segment_distance
 
 MAX_PLANETS = 60
