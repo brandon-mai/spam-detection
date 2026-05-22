@@ -1,0 +1,23 @@
+[project]
+name = "orbit-wars"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "flax>=0.12.7",
+    "ipython>=9.13.0",
+    "jax>=0.10.0",
+    "jaxlib>=0.10.0",
+    "kaggle>=2.1.2",
+    "kaggle-environments>=1.28.0",
+    "numba>=0.65.1",
+    "optax>=0.2.8",
+    "pyrefly>=1.0.0",
+]
+
+[tool.pyrefly]
+project-includes = [
+    "**/*.py*",
+    "**/*.ipynb",
+]
