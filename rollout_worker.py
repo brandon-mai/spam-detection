@@ -1,8 +1,17 @@
+import os
 import multiprocessing as mp
 import numpy as np
 import math
+
+# Force JAX to use CPU strictly for rollout workers to prevent GPU OOM
+os.environ["JAX_PLATFORMS"] = "cpu"
+
 import jax
 from kaggle_environments import make
+import logging
+
+# Suppress Kaggle Environments open_spiel debug logs
+logging.getLogger('kaggle_environments').setLevel(logging.ERROR)
 from rl_env_wrapper import extract_tensors, get_autoregressive_mask, MAX_PLANETS
 from models import EntityTransformer
 

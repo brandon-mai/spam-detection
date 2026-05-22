@@ -1,3 +1,7 @@
+import os
+# Prevent JAX from instantly pre-allocating 90% of the GPU VRAM
+os.environ["XLA_PYTHON_CLIENT_PREALLOCATE"] = "false"
+
 import jax
 import jax.numpy as jnp
 import optax
