@@ -3,7 +3,7 @@ import jax.numpy as jnp
 import flax.linen as nn
 
 MAX_PLANETS = 60
-MAX_FLEETS = 1000
+MAX_FLEETS = 100
 
 class EntityTransformer(nn.Module):
     d_model: int = 128

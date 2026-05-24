@@ -21,7 +21,7 @@ finally:
 from orbit_wars_env_numba import point_to_segment_distance
 
 MAX_PLANETS = 60
-MAX_FLEETS = 1000
+MAX_FLEETS = 100
 
 def extract_tensors(obs, local_state_tracking):
     """
