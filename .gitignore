@@ -10,4 +10,7 @@ wheels/
 .venv
 
 # Randos
-orbit-wars-data/
+orbit_wars_data/
+test*
+*config.json
+.agents/
