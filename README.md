@@ -17,10 +17,6 @@ uv run kaggle competitions submissions orbit-wars
 - Player 2 (Teal): 2 side stripes (running from the center towards the wings).
 - Player 3 (Yellow): 3 stripes (both the center and the two side stripes).
 
-## Rule-Based Agents
-
-This repository focuses on heuristic, rule-based agents located in the `agents/` directory.
-
 ### Local Testing
 
 To test a rule-based agent (e.g., `pilkwang_ppo.py`) against another agent:
@@ -39,3 +35,30 @@ You can submit any of the rule-based agents from the `agents/` directory. For ex
 uv run kaggle competitions submit orbit-wars -f agents/pilkwang_ppo.py -m "Pilkwang PPO Rule-Based Agent v1"
 ```
 
+### Redundant `kaggle_environments` Logs
+
+When importing `kaggle_environments`, it may dump verbose initialization logs from the C++ OpenSpiel engine to stdout/stderr. In multiprocessing scenarios, this happens per worker and can flood the console.
+
+To fix, temporarily redirect `sys.stdout` and `sys.stderr` to `os.devnull` when importing:
+
+```python
+import os, sys, logging
+
+fd_out, fd_err = sys.stdout.fileno(), sys.stderr.fileno()
+saved_out, saved_err = os.dup(fd_out), os.dup(fd_err)
+devnull = os.open(os.devnull, os.O_WRONLY)
+
+os.dup2(devnull, fd_out)
+os.dup2(devnull, fd_err)
+logging.disable(logging.WARNING)
+
+try:
+    from kaggle_environments import make
+finally:
+    os.dup2(saved_out, fd_out)
+    os.dup2(saved_err, fd_err)
+    os.close(devnull)
+    os.close(saved_out)
+    os.close(saved_err)
+    logging.disable(logging.NOTSET)
+```
