@@ -2,12 +2,12 @@ import os
 import sys
 import json
 import glob
-import os
-import sys
 import random
 import logging
+import math
 import concurrent.futures
 from tqdm.auto import tqdm
+import numpy as np
 
 # Suppress all output (including C++ level) during kaggle_environments import
 fd_out = sys.stdout.fileno()
@@ -32,11 +32,12 @@ finally:
 # Add project root to path
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-NUM_GAMES_2P = 2000
-NUM_GAMES_4P = 2000
+from drl_pipeline.orbit_physics_jit import jit_resolve_fleet_targets, jit_point_to_segment_dist, jit_build_graph_features
+
+TARGET_TRANSITIONS = 500000
 MAX_STEPS = 500
-OUTPUT_FILE_2P = "drl_pipeline/expert_dataset_2p.jsonl"
-OUTPUT_FILE_4P = "drl_pipeline/expert_dataset_4p.jsonl"
+OUTPUT_FILE_2P = "drl_pipeline/expert_dataset_2p.npz"
+OUTPUT_FILE_4P = "drl_pipeline/expert_dataset_4p.npz"
 AGENT_PATH = "agents/vkhydras_final.py"
 MAX_WORKERS = os.cpu_count() or 4
 
@@ -82,45 +83,161 @@ def simulate_match(game_idx, num_players):
             if action is None or len(action) == 0:
                 action = []
                 
+            # Extract features using the physics engine
+            planets_data = obs.get("planets", [])
+            fleets_data = obs.get("fleets", [])
+            if isinstance(planets_data, dict):
+                planets_items = [(int(k), v) for k, v in planets_data.items()]
+            else:
+                planets_items = enumerate(planets_data)
+                
+            if isinstance(fleets_data, dict):
+                fleets_items = [(int(k), v) for k, v in fleets_data.items()]
+            else:
+                fleets_items = enumerate(fleets_data)
+            
+            num_planets_total = 50
+            num_planets = num_planets_total
+            V = np.zeros((num_planets_total, 13), dtype=np.float32)
+            E = np.zeros((num_planets_total, num_planets_total, 4), dtype=np.float32)
+            
+            # Build basic matrix for python processing
+            planet_matrix = np.zeros((num_planets_total, 6), dtype=np.float32)
+            fleet_matrix = np.zeros((len(fleets_data), 4), dtype=np.float32)
+            
+            has_planets = False
+            for pid, pdata in planets_items:
+                if len(pdata) == 7:
+                    owner, px, py, radius, garrison, prod = pdata[1:7]
+                else:
+                    owner, px, py, radius, garrison, prod = pdata[0:6]
+                    
+                if owner == player_idx:
+                    has_planets = True
+                    
+                planet_matrix[pid, 0] = owner
+                planet_matrix[pid, 1] = px
+                planet_matrix[pid, 2] = py
+                planet_matrix[pid, 3] = radius
+                planet_matrix[pid, 4] = garrison
+                planet_matrix[pid, 5] = prod
+                
+            for i, (fid, fdata) in enumerate(fleets_items):
+                if len(fdata) == 6:
+                    owner, fx, fy, heading, ships = fdata[1:6]
+                else:
+                    owner, fx, fy, heading, ships = fdata[0:5]
+                    
+                fleet_matrix[i, 0] = fx
+                fleet_matrix[i, 1] = fy
+                fleet_matrix[i, 2] = heading
+                fleet_matrix[i, 3] = ships
+                
+            if not has_planets:
+                continue
+                
+            # Run accelerated feature builder
+            V, E = jit_build_graph_features(planet_matrix, fleet_matrix, player_idx)
+            
+            # Format action: [source, target, quota_index]
+            parsed_action = [0, 50, 0] # NO_OP
+            if len(action) > 0:
+                act = action[0]
+                src = int(act[0])
+                ships = act[2]
+                garrison = V[src, 2]
+                
+                quota_idx = 2
+                if garrison > 0:
+                    frac = ships / garrison
+                    if frac <= 0.35: quota_idx = 0
+                    elif frac <= 0.75: quota_idx = 1
+                    else: quota_idx = 2
+                    
+                # Calculate target destination using raycast on physics engine
+                heading = act[1]
+                fleet_dummy = np.zeros((1, 4), dtype=np.float32)
+                fleet_dummy[0, 0] = planet_matrix[src, 1]
+                fleet_dummy[0, 1] = planet_matrix[src, 2]
+                fleet_dummy[0, 2] = heading
+                fleet_dummy[0, 3] = ships
+                
+                # We need planet subset [N, 3] -> [px, py, radius]
+                p_sub = planet_matrix[:, 1:4]
+                targets = jit_resolve_fleet_targets(fleet_dummy, p_sub, 0.0)
+                tgt = targets[0, 0]
+                if tgt == -1:
+                    tgt = 50 # Missing / Offboard
+                    
+                parsed_action = [src, tgt, quota_idx]
+                
             record = {
-                "game_id": game_idx,
-                "step": obs.get("step", step_idx),
-                "player": obs.get("player", player_idx),
-                "obs": obs,
-                "action": action
+                "V": V.astype(np.float16),
+                "E": E.astype(np.float16),
+                "src": parsed_action[0],
+                "tgt": parsed_action[1],
+                "quota": parsed_action[2]
             }
             records.append(record)
     return records
 
+def gather_dataset(mode, target_file):
+    print(f"Generating {mode}P Dataset: {TARGET_TRANSITIONS} transitions...")
+    
+    all_V = np.zeros((TARGET_TRANSITIONS, 50, 13), dtype=np.float16)
+    all_E = np.zeros((TARGET_TRANSITIONS, 50, 50, 4), dtype=np.float16)
+    all_src = np.zeros(TARGET_TRANSITIONS, dtype=np.int32)
+    all_tgt = np.zeros(TARGET_TRANSITIONS, dtype=np.int32)
+    all_quota = np.zeros(TARGET_TRANSITIONS, dtype=np.int32)
+    
+    total_transitions = 0
+    game_idx = 0
+    
+    with concurrent.futures.ProcessPoolExecutor(max_workers=MAX_WORKERS) as executor:
+        futures = set()
+        for _ in range(MAX_WORKERS * 2):
+            futures.add(executor.submit(simulate_match, game_idx, mode))
+            game_idx += 1
+            
+        pbar = tqdm(total=TARGET_TRANSITIONS, desc=f"{mode}P Transitions")
+        while total_transitions < TARGET_TRANSITIONS and futures:
+            done, not_done = concurrent.futures.wait(futures, return_when=concurrent.futures.FIRST_COMPLETED)
+            for future in done:
+                try:
+                    records = future.result()
+                    for r in records:
+                        if total_transitions < TARGET_TRANSITIONS:
+                            all_V[total_transitions] = r["V"]
+                            all_E[total_transitions] = r["E"]
+                            all_src[total_transitions] = r["src"]
+                            all_tgt[total_transitions] = r["tgt"]
+                            all_quota[total_transitions] = r["quota"]
+                            total_transitions += 1
+                            pbar.update(1)
+                except Exception as e:
+                    print(f"{mode}P Game failed: {e}")
+                    
+                if total_transitions < TARGET_TRANSITIONS:
+                    not_done.add(executor.submit(simulate_match, game_idx, mode))
+                    game_idx += 1
+            futures = not_done
+            
+        pbar.close()
+        
+    print(f"Saving {mode}P Dataset to {target_file}...")
+    np.savez_compressed(target_file, 
+                        V=all_V, 
+                        E=all_E, 
+                        src=all_src, 
+                        tgt=all_tgt, 
+                        quota=all_quota)
+    print("Done!")
+
 def generate_datasets():
     print(f"Discovered {len(OTHER_AGENTS)} other agents for 30% sampling.")
-    print(f"Generating 2P Dataset: {NUM_GAMES_2P} games...")
-    
-    # Generate 2P
-    with open(OUTPUT_FILE_2P, "w") as f2p:
-        with concurrent.futures.ProcessPoolExecutor(max_workers=MAX_WORKERS) as executor:
-            futures_2p = {executor.submit(simulate_match, i, 2): i for i in range(NUM_GAMES_2P)}
-            for future in tqdm(concurrent.futures.as_completed(futures_2p), total=NUM_GAMES_2P, desc="2P Games"):
-                try:
-                    for record in future.result():
-                        f2p.write(json.dumps(record) + "\n")
-                except Exception as e:
-                    print(f"2P Game failed: {e}")
-                    
-    print(f"Generating 4P Dataset: {NUM_GAMES_4P} games...")
-    
-    # Generate 4P
-    with open(OUTPUT_FILE_4P, "w") as f4p:
-        with concurrent.futures.ProcessPoolExecutor(max_workers=MAX_WORKERS) as executor:
-            futures_4p = {executor.submit(simulate_match, i, 4): i for i in range(NUM_GAMES_4P)}
-            for future in tqdm(concurrent.futures.as_completed(futures_4p), total=NUM_GAMES_4P, desc="4P Games"):
-                try:
-                    for record in future.result():
-                        f4p.write(json.dumps(record) + "\n")
-                except Exception as e:
-                    print(f"4P Game failed: {e}")
-
-    print("Datasets generated successfully.")
+    gather_dataset(2, OUTPUT_FILE_2P)
+    gather_dataset(4, OUTPUT_FILE_4P)
+    print("All datasets generated successfully.")
 
 if __name__ == "__main__":
     generate_datasets()
