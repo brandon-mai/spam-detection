@@ -1,38 +1,30 @@
 import os
 import sys
-import contextlib
 import webbrowser
+import logging
 
-# Silently import make from kaggle_environments
-@contextlib.contextmanager
-def silence_outputs():
-    stdout_fd = 1
-    stderr_fd = 2
-    try:
-        dup_stdout = os.dup(stdout_fd)
-        dup_stderr = os.dup(stderr_fd)
-        devnull = os.open(os.devnull, os.O_WRONLY)
-        os.dup2(devnull, stdout_fd)
-        os.dup2(devnull, stderr_fd)
-    except Exception:
-        yield
-        return
-    try:
-        yield
-    finally:
-        os.dup2(dup_stdout, stdout_fd)
-        os.dup2(dup_stderr, stderr_fd)
-        os.close(devnull)
-        os.close(dup_stdout)
-        os.close(dup_stderr)
+fd_out, fd_err = sys.stdout.fileno(), sys.stderr.fileno()
+saved_out, saved_err = os.dup(fd_out), os.dup(fd_err)
+devnull = os.open(os.devnull, os.O_WRONLY)
 
-with silence_outputs():
+os.dup2(devnull, fd_out)
+os.dup2(devnull, fd_err)
+logging.disable(logging.WARNING)
+
+try:
     from kaggle_environments import make
+finally:
+    os.dup2(saved_out, fd_out)
+    os.dup2(saved_err, fd_err)
+    os.close(devnull)
+    os.close(saved_out)
+    os.close(saved_err)
+    logging.disable(logging.NOTSET)
 
 def main():
     # 1. Declare agents (can modify paths to test other agents)
     AGENTS = [
-        "agents/drl_agent.py",
+        "agents/simplified/main.py",
         "agents/vkhydras_final.py"
     ]
     OUT_PATH = "play_replay.html"

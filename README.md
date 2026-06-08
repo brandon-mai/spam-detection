@@ -29,10 +29,15 @@ Open `replay.html` in your browser to watch the match.
 
 ### Kaggle Submission
 
-You can submit any of the rule-based agents from the `agents/` directory. For example, to submit `pilkwang_ppo.py`:
+You can submit any of the rule-based agents from the `agents/` directory.
 
 ```bash
-uv run kaggle competitions submit orbit-wars -f agents/pilkwang_ppo.py -m "Pilkwang PPO Rule-Based Agent v1"
+# Single file agent (single file in agents/)
+uv run kaggle competitions submit orbit-wars -f agents/file.py -m "message"
+
+# Multi file agent (a directory in agents/ with main.py)
+tar -czf submission.tar.gz -C agents/directory/ .
+uv run kaggle competitions submit orbit-wars -f submission.tar.gz -m "message"
 ```
 
 ### Redundant `kaggle_environments` Logs
