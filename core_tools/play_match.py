@@ -32,8 +32,8 @@ with silence_outputs():
 def main():
     # 1. Declare agents (can modify paths to test other agents)
     AGENTS = [
-        "agents/hellburner_v2.py",
-        "agents/may18.py"
+        "agents/drl_agent.py",
+        "agents/vkhydras_final.py"
     ]
     OUT_PATH = "play_replay.html"
     SEED = 42

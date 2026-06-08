@@ -34,7 +34,7 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 from drl_pipeline.orbit_physics_jit import jit_resolve_fleet_targets, jit_point_to_segment_dist, jit_build_graph_features
 
-TARGET_TRANSITIONS = 500000
+TARGET_TRANSITIONS = int(1e6)
 MAX_STEPS = 500
 OUTPUT_FILE_2P = "drl_pipeline/expert_dataset_2p.npz"
 OUTPUT_FILE_4P = "drl_pipeline/expert_dataset_4p.npz"
@@ -103,7 +103,7 @@ def simulate_match(game_idx, num_players):
             
             # Build basic matrix for python processing
             planet_matrix = np.zeros((num_planets_total, 6), dtype=np.float32)
-            fleet_matrix = np.zeros((len(fleets_data), 4), dtype=np.float32)
+            fleet_matrix = np.zeros((len(fleets_data), 5), dtype=np.float32)
             
             has_planets = False
             for pid, pdata in planets_items:
@@ -132,6 +132,7 @@ def simulate_match(game_idx, num_players):
                 fleet_matrix[i, 1] = fy
                 fleet_matrix[i, 2] = heading
                 fleet_matrix[i, 3] = ships
+                fleet_matrix[i, 4] = owner
                 
             if not has_planets:
                 continue
@@ -145,18 +146,18 @@ def simulate_match(game_idx, num_players):
                 act = action[0]
                 src = int(act[0])
                 ships = act[2]
-                garrison = V[src, 2]
+                raw_garrison = planet_matrix[src, 4]
                 
                 quota_idx = 2
-                if garrison > 0:
-                    frac = ships / garrison
+                if raw_garrison > 0:
+                    frac = ships / raw_garrison
                     if frac <= 0.35: quota_idx = 0
                     elif frac <= 0.75: quota_idx = 1
                     else: quota_idx = 2
                     
                 # Calculate target destination using raycast on physics engine
                 heading = act[1]
-                fleet_dummy = np.zeros((1, 4), dtype=np.float32)
+                fleet_dummy = np.zeros((1, 5), dtype=np.float32)
                 fleet_dummy[0, 0] = planet_matrix[src, 1]
                 fleet_dummy[0, 1] = planet_matrix[src, 2]
                 fleet_dummy[0, 2] = heading

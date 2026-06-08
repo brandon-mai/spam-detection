@@ -49,7 +49,7 @@ class OrbitGATModel(nn.Module):
     max_nodes: int = 50
 
     @nn.compact
-    def __call__(self, node_features, edge_features, game_mode_flag):
+    def __call__(self, node_features, edge_features, game_mode_flag, true_source=None, true_target=None):
         # node_features: (B, N, 13)
         # edge_features: (B, N, N, 4)
         # game_mode_flag: (B, 1) -> 0 for 2P, 1 for 4P
@@ -86,8 +86,11 @@ class OrbitGATModel(nn.Module):
         
         # Assume for generation we take argmax, but during training we output all targets.
         # To compute Head B and C, we need the chosen Source embedding.
-        # We'll use a dummy argmax for structural testing if source_idx isn't provided.
-        source_idx = jnp.argmax(logits_S, axis=-1) # (B,)
+        # We'll use a dummy argmax for structural testing if true_source isn't provided.
+        if true_source is not None:
+            source_idx = true_source
+        else:
+            source_idx = jnp.argmax(logits_S, axis=-1) # (B,)
         
         # Gather X_S: (B, 128)
         batch_indices = jnp.arange(B)
@@ -109,7 +112,10 @@ class OrbitGATModel(nn.Module):
         logits_T = jnp.concatenate([logits_T_nodes, logits_T_noop], axis=-1) # (B, N+1)
         
         # Head C: Allocation Quota (Q)
-        target_idx = jnp.argmax(logits_T, axis=-1) # (B,)
+        if true_target is not None:
+            target_idx = true_target
+        else:
+            target_idx = jnp.argmax(logits_T, axis=-1) # (B,)
         
         # If target is NO_OP, X_T is zeros or a specific embedding.
         # For simplicity, if target == N, use zeros.

@@ -153,11 +153,26 @@ def jit_build_graph_features(planet_matrix, fleet_matrix, player_idx):
     """
     Accelerated function to build node (V) and edge (E) features.
     planet_matrix: [N, 6] -> [owner, x, y, radius, garrison, prod]
-    fleet_matrix: [M, 4] -> [x, y, heading, ships]
+    fleet_matrix: [M, 5] -> [x, y, heading, ships, owner]
     """
     num_planets = planet_matrix.shape[0]
     V = np.zeros((num_planets, 13), dtype=np.float32)
     E = np.zeros((num_planets, num_planets, 4), dtype=np.float32)
+    
+    inbound_friendly = np.zeros(num_planets, dtype=np.float32)
+    inbound_hostile = np.zeros(num_planets, dtype=np.float32)
+    
+    if fleet_matrix.shape[0] > 0:
+        targets = jit_resolve_fleet_targets(fleet_matrix, planet_matrix[:, 1:4], 0.0)
+        for f in range(fleet_matrix.shape[0]):
+            tgt = targets[f, 0]
+            if tgt != -1 and tgt < num_planets:
+                ships = fleet_matrix[f, 3]
+                owner = fleet_matrix[f, 4]
+                if owner == player_idx:
+                    inbound_friendly[tgt] += ships
+                else:
+                    inbound_hostile[tgt] += ships
     
     for i in range(num_planets):
         owner = planet_matrix[i, 0]
@@ -167,9 +182,9 @@ def jit_build_graph_features(planet_matrix, fleet_matrix, player_idx):
         garrison = planet_matrix[i, 4]
         prod = planet_matrix[i, 5]
         
-        V[i, 0] = radius
-        V[i, 1] = prod
-        V[i, 2] = garrison
+        V[i, 0] = radius / 50.0
+        V[i, 1] = prod / 5.0
+        V[i, 2] = math.log1p(max(0.0, garrison)) / 10.0
         
         if owner == player_idx:
             V[i, 3] = 1.0
@@ -180,24 +195,21 @@ def jit_build_graph_features(planet_matrix, fleet_matrix, player_idx):
             V[i, 4 + rel_idx] = 1.0
             
         V[i, 8] = 0.0 # Is_Comet
-        V[i, 12] = prod * 20.0 # Net_Garrison_Delta (stub)
+        net_delta = (prod * 20.0) + inbound_friendly[i] - inbound_hostile[i]
+        V[i, 12] = math.copysign(math.log1p(abs(net_delta)), net_delta) / 10.0
         
     for i in range(num_planets):
         for j in range(num_planets):
             dx = planet_matrix[i, 1] - planet_matrix[j, 1]
             dy = planet_matrix[i, 2] - planet_matrix[j, 2]
             dist = math.hypot(dx, dy)
-            E[i, j, 0] = dist
+            E[i, j, 0] = dist / 100.0
             if i != j and dist > 0:
                 hit_sun = jit_point_to_segment_dist(50.0, 50.0, planet_matrix[i, 1], planet_matrix[i, 2], planet_matrix[j, 1], planet_matrix[j, 2])
                 E[i, j, 1] = 1.0 if hit_sun < 10.0 else 0.0
                 
-    if fleet_matrix.shape[0] > 0:
-        targets = jit_resolve_fleet_targets(fleet_matrix, planet_matrix[:, 1:4], 0.0)
-        for f in range(fleet_matrix.shape[0]):
-            tgt = targets[f, 0]
-            if tgt != -1 and tgt < num_planets:
-                # Add to E[tgt, tgt, 2] as a stub for inbound fleet mass
-                E[tgt, tgt, 2] += fleet_matrix[f, 3]
-                
+        total_inbound = inbound_friendly[i] + inbound_hostile[i]
+        if total_inbound > 0:
+            E[i, i, 2] = math.log1p(total_inbound) / 10.0
+            
     return V, E
