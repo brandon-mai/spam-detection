@@ -1,4 +1,6 @@
 import os
+os.environ["XLA_PYTHON_CLIENT_ALLOCATOR"] = "platform"
+
 import argparse
 import numpy as np
 import jax
@@ -111,11 +113,21 @@ def eval_step(params, batch, model):
     logits_S, logits_T, logits_Q = model.apply({'params': params}, V, E, mode, true_source=src, true_target=tgt)
     
     is_active = (tgt != 50).astype(jnp.float32)
+    
+    loss_S_raw = optax.softmax_cross_entropy_with_integer_labels(logits_S, src)
+    loss_T_raw = optax.softmax_cross_entropy_with_integer_labels(logits_T, tgt)
+    loss_Q_raw = optax.softmax_cross_entropy_with_integer_labels(logits_Q, quota)
+    
+    loss_S = jnp.sum(loss_S_raw * is_active) / jnp.maximum(1.0, jnp.sum(is_active))
+    loss_Q = jnp.sum(loss_Q_raw * is_active) / jnp.maximum(1.0, jnp.sum(is_active))
+    loss_T = jnp.mean(loss_T_raw)
+    total_loss = loss_S + loss_T + loss_Q
+    
     acc_S = jnp.sum((jnp.argmax(logits_S, axis=-1) == src) * is_active) / jnp.maximum(1.0, jnp.sum(is_active))
     acc_T = jnp.sum((jnp.argmax(logits_T, axis=-1) == tgt) * is_active) / jnp.maximum(1.0, jnp.sum(is_active))
     acc_Q = jnp.sum((jnp.argmax(logits_Q, axis=-1) == quota) * is_active) / jnp.maximum(1.0, jnp.sum(is_active))
     
-    return acc_S, acc_T, acc_Q
+    return total_loss, acc_S, acc_T, acc_Q
 
 
 def main():
@@ -147,6 +159,8 @@ def main():
     os.makedirs('drl_pipeline/checkpoints', exist_ok=True)
 
     print(f"Starting Training Loop for {args.mode.upper()}...")
+    best_val_loss = float('inf')
+    best_params = params
     for epoch in range(args.epochs):
         train_gen = batch_generator(data, mode_flag, is_val=False, batch_size=args.batch_size, shuffle=True)
         
@@ -170,10 +184,12 @@ def main():
 
         # Validation
         val_gen = batch_generator(data, mode_flag, is_val=True, batch_size=args.batch_size, shuffle=False)
+        val_losses = []
         val_acc_S, val_acc_T, val_acc_Q = [], [], []
         for batch in val_gen:
             batch = tuple(jnp.array(x) for x in batch)
-            v_S, v_T, v_Q = eval_step(params, batch, model)
+            v_loss, v_S, v_T, v_Q = eval_step(params, batch, model)
+            val_losses.append(v_loss)
             val_acc_S.append(v_S)
             val_acc_T.append(v_T)
             val_acc_Q.append(v_Q)
@@ -183,19 +199,25 @@ def main():
         avg_train_T = np.mean(epoch_acc_T)
         avg_train_Q = np.mean(epoch_acc_Q)
         
+        avg_val_loss = np.mean(val_losses)
         avg_val_S = np.mean(val_acc_S)
         avg_val_T = np.mean(val_acc_T)
         avg_val_Q = np.mean(val_acc_Q)
 
-        print(f"\\n--- Epoch {epoch+1} Results ---")
+        print(f"\n--- Epoch {epoch+1} Results ---")
         print(f"Train Loss: {avg_loss:.4f} | Train Acc: S={avg_train_S:.2%}, T={avg_train_T:.2%}, Q={avg_train_Q:.2%}")
-        print(f"Val Acc:   S={avg_val_S:.2%}, T={avg_val_T:.2%}, Q={avg_val_Q:.2%}")
+        print(f"Val Loss:   {avg_val_loss:.4f} | Val Acc:   S={avg_val_S:.2%}, T={avg_val_T:.2%}, Q={avg_val_Q:.2%}")
+        
+        if avg_val_loss < best_val_loss:
+            print(f"Validation loss improved from {best_val_loss:.4f} to {avg_val_loss:.4f}. Saving best checkpoint.")
+            best_val_loss = avg_val_loss
+            best_params = params
         
     # Save Final Checkpoint
     ckpt_path = f"drl_pipeline/checkpoints/{args.save}"
     with open(ckpt_path, "wb") as f:
-        f.write(to_bytes(params))
-    print(f"Final Checkpoint saved to {ckpt_path}")
+        f.write(to_bytes(best_params))
+    print(f"Best Checkpoint saved to {ckpt_path}")
 
 if __name__ == "__main__":
     main()

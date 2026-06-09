@@ -17,16 +17,6 @@ uv run kaggle competitions submissions orbit-wars
 - Player 2 (Teal): 2 side stripes (running from the center towards the wings).
 - Player 3 (Yellow): 3 stripes (both the center and the two side stripes).
 
-### Local Testing
-
-To test a rule-based agent (e.g., `pilkwang_ppo.py`) against another agent:
-
-```bash
-uv run python -c "from kaggle_environments import make; env = make('orbit_wars'); env.run(['agents/pilkwang_ppo.py', 'random']); env.render(mode='html', out_path='replay.html')"
-```
-
-Open `replay.html` in your browser to watch the match.
-
 ### Kaggle Submission
 
 You can submit any of the rule-based agents from the `agents/` directory.

@@ -8,8 +8,10 @@ import math
 import concurrent.futures
 from tqdm.auto import tqdm
 import numpy as np
-
-# Suppress all output (including C++ level) during kaggle_environments import
+import multiprocessing as mp
+import os
+os.environ["OMP_NUM_THREADS"] = "1"
+os.environ["MKL_NUM_THREADS"] = "1"
 fd_out = sys.stdout.fileno()
 fd_err = sys.stderr.fileno()
 saved_out = os.dup(fd_out)
@@ -30,19 +32,20 @@ finally:
     logging.disable(logging.NOTSET)
 
 # Add project root to path
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-from drl_pipeline.orbit_physics_jit import jit_resolve_fleet_targets, jit_point_to_segment_dist, jit_build_graph_features
+from agents.drl.utils.orbit_physics_jit import jit_resolve_fleet_targets
+from agents.drl.utils.features import build_graph_features
 
 TARGET_TRANSITIONS = int(1e6)
 MAX_STEPS = 500
 OUTPUT_FILE_2P = "drl_pipeline/expert_dataset_2p.npz"
 OUTPUT_FILE_4P = "drl_pipeline/expert_dataset_4p.npz"
-AGENT_PATH = "agents/vkhydras_final.py"
+AGENT_PATH = "agents/simplified/main.py"
 MAX_WORKERS = os.cpu_count() or 4
 
 def get_other_agents():
-    files = glob.glob("agents/*.py")
+    files = glob.glob("agents/*.py") + glob.glob("agents/*/main.py")
     exclude = ["agents\\nearest_planet_sniper.py", "agents/nearest_planet_sniper.py", "agents\\__init__.py", "agents/__init__.py"]
     return [f for f in files if f not in exclude]
 
@@ -138,7 +141,7 @@ def simulate_match(game_idx, num_players):
                 continue
                 
             # Run accelerated feature builder
-            V, E = jit_build_graph_features(planet_matrix, fleet_matrix, player_idx)
+            V, E, _, _ = build_graph_features(obs, {"num_agents": num_players})
             
             # Format action: [source, target, quota_index]
             parsed_action = [0, 50, 0] # NO_OP
@@ -194,7 +197,7 @@ def gather_dataset(mode, target_file):
     total_transitions = 0
     game_idx = 0
     
-    with concurrent.futures.ProcessPoolExecutor(max_workers=MAX_WORKERS) as executor:
+    with concurrent.futures.ProcessPoolExecutor(max_workers=MAX_WORKERS, mp_context=mp.get_context('spawn')) as executor:
         futures = set()
         for _ in range(MAX_WORKERS * 2):
             futures.add(executor.submit(simulate_match, game_idx, mode))

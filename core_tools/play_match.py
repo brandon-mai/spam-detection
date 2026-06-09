@@ -24,8 +24,8 @@ finally:
 def main():
     # 1. Declare agents (can modify paths to test other agents)
     AGENTS = [
-        "agents/simplified/main.py",
-        "agents/vkhydras_final.py"
+        "agents/drl/main.py",
+        "agents/nearest_planet_sniper.py"
     ]
     OUT_PATH = "play_replay.html"
     SEED = 42
@@ -44,10 +44,10 @@ def main():
     with open(OUT_PATH, "w", encoding="utf-8") as f:
         f.write(html)
         
-    print("Opening replay in web browser...")
-    abs_path = os.path.abspath(OUT_PATH)
-    webbrowser.open(f"file:///{abs_path}")
-    print("Done!")
+    # print("Opening replay in web browser...")
+    # abs_path = os.path.abspath(OUT_PATH)
+    # webbrowser.open(f"file:///{abs_path}")
+    # print("Done!")
 
 if __name__ == "__main__":
     main()
